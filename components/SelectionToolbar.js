@@ -119,7 +119,7 @@ const SelectionToolbar = ({
               <img
                 src="/icons/undo.png"
                 alt="undo"
-                className="min-h-4 min-w-4 object-contain"
+                className="min-h-4 min-w-4 w-4 h-4 object-contain"
                 aria-hidden
               />
             </button>
@@ -142,7 +142,7 @@ const SelectionToolbar = ({
               <img
                 src="/icons/redo.png"
                 alt="redo"
-                className="min-h-4 min-w-4 object-contain"
+                className="min-h-4 min-w-4 w-4 max-h-2 object-contain"
                 aria-hidden
               />
             </button>

@@ -120,7 +120,7 @@ export function createInfographicsStore(initialProject = { pages: [] }) {
         this.activePageId;
     },
 
-    // ========== block API (used by commands & UI live updates) ==========
+    // ========== block(used by commands & UI live updates) ==========
     updateBlock(id, patch = {}) {
       const b = this.getBlockById(id);
       if (!b) return;

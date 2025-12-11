@@ -1,4 +1,5 @@
 import Image from "next/image";
+import { autorun, toJS } from "mobx";
 import {
   useCallback,
   useEffect,
@@ -57,6 +58,72 @@ const deepClone = (v) => {
   }
 };
 
+// normalize unit value (x/y or width/height) to pixels given canvas size
+function toPx(value, canvasSize = 0) {
+  // if null/undefined keep as-is
+  if (value === null || typeof value === "undefined") return value;
+
+  // strings with percent: "76%"
+  if (typeof value === "string" && value.trim().endsWith("%")) {
+    const num = parseFloat(value);
+    if (!Number.isNaN(num) && typeof canvasSize === "number") {
+      return (num / 100) * canvasSize;
+    }
+    return 0;
+  }
+
+  // strings with px: "180px"
+  if (typeof value === "string" && value.trim().toLowerCase().endsWith("px")) {
+    const num = parseFloat(value);
+    return Number.isFinite(num) ? num : 0;
+  }
+
+  // if it's a number -> already pixel coordinate (do NOT treat as percent)
+  if (typeof value === "number") return value;
+
+  // fallback: try parseFloat (handles "320" string case) — but prefer treating plain numeric strings as px
+  if (typeof value === "string") {
+    const n = parseFloat(value);
+    if (!Number.isNaN(n)) return n;
+  }
+
+  return value;
+}
+
+// normalize a whole block using canvas rect
+function normalizeBlockToPx(block, canvasRect = { width: 0, height: 0 }) {
+  const b = { ...(block || {}) };
+
+  // position
+  if (b.position) {
+    b.position = {
+      x: toPx(b.position.x, canvasRect.width),
+      y: toPx(b.position.y, canvasRect.height),
+    };
+  } else {
+    b.position = { x: 0, y: 0 };
+  }
+
+  // size
+  if (b.size) {
+    b.size = {
+      width:
+        typeof b.size.width !== "undefined"
+          ? toPx(b.size.width, canvasRect.width)
+          : undefined,
+      height:
+        typeof b.size.height !== "undefined"
+          ? toPx(b.size.height, canvasRect.height)
+          : undefined,
+      ...Object.keys(b.size || {})
+        .filter((k) => !["width", "height"].includes(k))
+        .reduce((acc, k) => ((acc[k] = b.size[k]), acc), {}),
+    };
+  }
+
+  return b;
+}
+
 function Home() {
   const store = useContext(InfographicsContext);
   if (!store) {
@@ -108,25 +175,10 @@ function Home() {
         updated.zIndex = index;
       }
 
-      // convert percent positions to px if present (assumes stored percents)
-      if (updated.position) {
-        const { x, y } = updated.position;
-        // guard for numeric percent-like values (0..100)
-        if (typeof x === "number" && x <= 100 && x >= -100) {
-          updated.position = {
-            x: (x / 100) * canvasRect.width,
-            y: (y / 100) * canvasRect.height,
-          };
-        } else {
-          // already px or unknown — keep as-is (but clone)
-          updated.position = {
-            x: updated.position.x ?? 0,
-            y: updated.position.y ?? 0,
-          };
-        }
-      }
+      // === NEW: robust unit handling for position & size ===
+      updated = normalizeBlockToPx(updated, canvasRect);
 
-      // text defaults: width (px) and base font size
+      // text defaults: width (px) and base font size (unchanged behavior)
       if (updated.type === "text") {
         const defaultWidths = {
           big: 0.76,
@@ -148,19 +200,11 @@ function Home() {
         const currentWidth = updated.size?.width;
 
         let widthPx;
+        // currentWidth is already normalized above; if it's a number we use it
         if (typeof currentWidth === "number") {
           widthPx = currentWidth;
-        } else if (
-          typeof currentWidth === "string" &&
-          currentWidth.endsWith("%")
-        ) {
-          const num = parseFloat(currentWidth);
-          if (!Number.isNaN(num)) {
-            widthPx = (num / 100) * canvasRect.width;
-          } else {
-            widthPx = frac * canvasRect.width;
-          }
         } else {
+          // fallback to percent-based default (use fraction of canvas)
           widthPx = frac * canvasRect.width;
         }
 
@@ -212,6 +256,39 @@ function Home() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, [store]);
+
+  useEffect(() => {
+    const dispose = autorun(() => {
+      const undo = toJS(store.undoStack).map((cmd, i) => ({
+        index: i,
+        name:
+          cmd.name ?? (cmd.constructor && cmd.constructor.name) ?? "anonymous",
+        // try to show snapshots if they exist
+        before: cmd.beforeSnapshot ?? cmd.oldMap ?? undefined,
+        after: cmd.afterSnapshot ?? cmd.newMap ?? undefined,
+        raw: cmd,
+      }));
+      const redo = toJS(store.redoStack).map((cmd, i) => ({
+        index: i,
+        name:
+          cmd.name ?? (cmd.constructor && cmd.constructor.name) ?? "anonymous",
+      }));
+      console.log("UNDO STACK :", undo);
+      console.log("REDO STACK :", redo);
+    });
+    return () => dispose();
+  }, []);
+
+  useEffect(() => {
+    const dispose = autorun(() => {
+      console.log(
+        "CURRENT PROJECT JSON:",
+        JSON.stringify(store.project, null, 2)
+      );
+    });
+
+    return () => dispose();
   }, [store]);
 
   // -------------------------
@@ -747,10 +824,98 @@ function Home() {
           );
         }
 
-        case "line":
-          return (
-            <span className="block h-px w-full border-t border-slate-200" />
-          );
+        case "shape": {
+          const shape = (block.shapeType || "").toString().toLowerCase();
+          const color = block.color || block.fill || "#000";
+          const widthStyle = block.size?.width;
+          const heightStyle = block.size?.height;
+
+          // helper to coerce percent widths (e.g. "76%") into CSS-friendly values
+          const cssWidth =
+            typeof widthStyle === "string" && widthStyle.trim().endsWith("%")
+              ? widthStyle
+              : typeof widthStyle === "number"
+              ? `${widthStyle}px`
+              : "100%";
+
+          // For shapes that prefer square dimensions (circle), we use width || height || fallback
+          const cssHeight =
+            typeof heightStyle === "number"
+              ? `${heightStyle}px`
+              : typeof heightStyle === "string" &&
+                heightStyle.trim().endsWith("%")
+              ? heightStyle
+              : undefined; // let rectangle/line use natural height if not provided
+
+          switch (shape) {
+            case "line":
+              // horizontal line — thin full-width bar
+              return (
+                <div
+                  style={{
+                    width: cssWidth,
+                    height: heightStyle ? heightStyle : "2px",
+                    backgroundColor: color,
+                    alignSelf: "stretch",
+                  }}
+                />
+              );
+
+            case "rectangle":
+            case "rect":
+            case "rectangle": // support a few variants
+              return (
+                <div
+                  style={{
+                    width: cssWidth,
+                    height:
+                      cssHeight ||
+                      (block.size && block.size.width
+                        ? cssHeight || "60px"
+                        : "60px"),
+                    backgroundColor: color,
+                    borderRadius:
+                      typeof block.borderRadius === "number"
+                        ? `${block.borderRadius}px`
+                        : block.borderRadius || 0,
+                    boxSizing: "border-box",
+                  }}
+                />
+              );
+
+            case "circle":
+            case "ellipse":
+              // circle: try to use block.size.width (or fallback to 60px).
+              // ensure width === height for a perfect circle.
+              const circleSize =
+                typeof widthStyle === "number"
+                  ? `${widthStyle}px`
+                  : typeof widthStyle === "string" &&
+                    widthStyle.trim().endsWith("%")
+                  ? widthStyle
+                  : typeof heightStyle === "number"
+                  ? `${heightStyle}px`
+                  : "60px";
+
+              return (
+                <div
+                  style={{
+                    width: circleSize,
+                    height: circleSize,
+                    backgroundColor: color,
+                    borderRadius: "50%",
+                    boxSizing: "border-box",
+                  }}
+                />
+              );
+
+            default:
+              // fallback: render a thin divider (keeps backward compatibility)
+              return (
+                <span className="block h-px w-full border-t border-slate-200" />
+              );
+          }
+        }
 
         case "palette":
           return (
