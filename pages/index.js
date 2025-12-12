@@ -7,6 +7,8 @@ import {
   useState,
   useLayoutEffect,
 } from "react";
+import { PromptBox } from "@/components/PromptBox";
+import JsonBox from "@/components/LiveJsonBox";
 import SelectionOverlay from "@/components/SelectionOverlay";
 import SelectionToolbar from "@/components/SelectionToolbar";
 import HelperToolbar from "@/components/HelperToolbar";
@@ -57,6 +59,20 @@ const deepClone = (v) => {
     return v;
   }
 };
+function normalizeIncomingProject(p) {
+  // minimal safety: ensure pages array + activePageId
+  const copy = JSON.parse(JSON.stringify(p || {}));
+  if (!Array.isArray(copy.pages)) copy.pages = [{ id: "page_1", title: "page_1", blocks: [] }];
+  if (!copy.activePageId) copy.activePageId = copy.pages[0]?.id;
+  // ensure every block has an id
+  copy.pages.forEach((pg, pi) => {
+    if (!Array.isArray(pg.blocks)) pg.blocks = [];
+    pg.blocks.forEach((blk, bi) => {
+      if (!blk.id) blk.id = `b-${pi}-${bi}-${Date.now()}`;
+    });
+  });
+  return copy;
+}
 
 // normalize unit value (x/y or width/height) to pixels given canvas size
 function toPx(value, canvasSize = 0) {
@@ -144,6 +160,17 @@ function Home() {
   const [isPositionPanelOpen, setIsPositionPanelOpen] = useState(false);
   const [canvasBackground, setCanvasBackground] = useState("");
   const [activeRectState, setActiveRectState] = useState(null);
+  const [liveJson, setLiveJson] = useState(() => {
+    // Try to seed from localStorage first (keeps continuity)
+    try {
+      const raw =
+        typeof localStorage !== "undefined" &&
+        localStorage.getItem("infographicJson");
+      if (raw) return JSON.parse(raw);
+    } catch (e) {}
+    // fallback to the current store.project snapshot
+    return toJS(store.project);
+  });
 
   const ALIGN_ORDER = ["center", "left", "right", "justify"];
   const LIST_ORDER = ["normal", "bullet", "number"];
@@ -234,6 +261,15 @@ function Home() {
 
     setPositionsInitialized(true);
   }, [positionsInitialized, store, canvasRef, setPositionsInitialized]);
+
+  useEffect(() => {
+    // simple sync: whenever store.project changes, update editor (avoid infinite loops)
+    const un = autorun(() => {
+      const snapshot = toJS(store.project);
+      setLiveJson(snapshot);
+    });
+    return () => un();
+  }, [store]);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -3682,7 +3718,7 @@ function Home() {
         </>
       )}
 
-      <div className="flex flex-col items-center gap-6">
+      <div className="relative flex flex-col items-center gap-6">
         <div className="relative flex flex-col items-center">
           <div className="absolute -bottom-10 h-10 w-40 bg-slate-400/30 blur-2xl" />
 
@@ -3750,6 +3786,43 @@ function Home() {
           </div>
         </div>
 
+       <aside>
+         <div style={{ display: "flex",flexDirection:"column",position:"absolute",top:-20,left:-550, gap: 5, marginBottom: 12 }}>
+          <PromptBox
+            apiUrl="https://ln92sqmw-8000.inc1.devtunnels.ms/stock/infographic/generate/"
+            onGenerated={(jsonResult) => {
+              // jsonResult is whatever your API returned (PromptBox already writes to localStorage)
+              // normalize or validate here if required, then replace the store project:
+              try {
+                const normalized = normalizeIncomingProject(jsonResult)
+                store.replaceProject(jsonResult);
+              } catch (e) {
+                console.error("replaceProject failed:", e);
+              }
+              // also reflect it in the live JSON editor immediately
+              setLiveJson(jsonResult);
+            }}
+          />
+
+          <div style={{ width: 520,}}>
+            <JsonBox
+              jsonObj={liveJson}
+              onChange={async (parsed) => {
+                // when user clicks "Apply JSON" in the editor, update store
+                try {
+                  store.replaceProject(parsed);
+                  // keep the editor in sync (the JsonBox will also have written to localStorage)
+                  setLiveJson(parsed);
+                } catch (e) {
+                  console.error("Failed to apply parsed JSON to store:", e);
+                }
+              }}
+              autoSaveKey="infographicJson" // optional - defaults to this key already
+            />
+          </div>
+        </div>
+
+       </aside>
         <button
           type="button"
           className="flex w-44 items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-600 shadow-md"

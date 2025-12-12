@@ -1,8 +1,8 @@
 // src/lib/canvasConfig.js
 
 export const baseCanvas = {
-  width: 260,
-  aspectRatio: "1 / 2.12",
+  width: 280,
+  aspectRatio: "1 / 2",
   borderColor: "2px solid rgba(168, 85, 247, 0.9)",
 };
 
