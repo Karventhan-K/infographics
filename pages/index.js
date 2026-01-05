@@ -10,6 +10,7 @@ import {
 import SelectionOverlay from "@/components/SelectionOverlay";
 import SelectionToolbar from "@/components/SelectionToolbar";
 import HelperToolbar from "@/components/HelperToolbar";
+
 import PositionPanel from "@/components/PositionPanel";
 import useInfograhisData from "@/hooks/useInfographicData";
 import { useContext } from "react";
@@ -45,6 +46,7 @@ import {
   AddPageCommand,
   RemovePageCommand,
 } from "@/stores/commands";
+import { createInfographicsStore } from "@/stores/InfographicsStore";
 
 const deepClone = (v) => {
   try {
@@ -155,6 +157,8 @@ function Home() {
   const measurementRAFRef = useRef(null);
   const handlePointerMoveRef = useRef();
   const endInteractionRef = useRef();
+
+  const storevalue = createInfographicsStore();
 
   // -------------------------
   // Initialize positions (same as before)
@@ -1718,6 +1722,8 @@ function Home() {
         store.updateBlock(blockSnapshot.id, {
           rotation: Number.isFinite(degrees) ? degrees : 0,
         });
+
+        console.log("upbahbjhk",store.getBlockById(blockSnapshot.id))
 
         // schedule measurement for rotation
         scheduleMeasureForIds([blockSnapshot.id]);
@@ -3720,6 +3726,7 @@ function Home() {
               style={{ background: canvasBackground || "transparent" }}
             >
               <div className="relative h-full w-full">
+                {console.log("activeBlocks---", activeBlocks)}
                 {[...activeBlocks]
                   .sort((a, b) => (a.zIndex ?? 0) - (b.zIndex ?? 0))
                   .map((block) => {
